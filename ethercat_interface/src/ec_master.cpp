@@ -92,8 +92,9 @@ void EcMaster::addSlave(uint16_t alias, uint16_t position, EcSlave * slave)
   }
 
   // check and setup dc
-
-  if (slave->assign_activate_dc_sync()) {
+  // zeroerr issue : https://github.com/ICube-Robotics/ethercat_driver_ros2/issues/154
+  // remove the DC configuration check
+  //if (slave->assign_activate_dc_sync()) {
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);
     ecrt_master_application_time(master_, EC_NEWTIMEVAL2NANO(t));
@@ -104,7 +105,7 @@ void EcMaster::addSlave(uint16_t alias, uint16_t position, EcSlave * slave)
       interval_ - (t.tv_nsec % (interval_)),
       0,
       0);
-  }
+  //}
 
   slave_info_.push_back(slave_info);
 
@@ -251,8 +252,8 @@ bool EcMaster::activate()
     }
     domain_info->domain_pd = ecrt_domain_data(domain_info->domain);
     if (domain_info->domain_pd == NULL) {
-      printWarning("Activate. Failed to retrieve domain process data.");
-      return false;
+      printWarning("Activate. Failed to retrieve domain process data. Asumme this is a ecat hub.");
+      //return false;
     }
   }
   return true;
@@ -324,6 +325,7 @@ void EcMaster::readData(uint32_t domain)
   // read and write process data
   for (DomainInfo::Entry & entry : domain_info->entries) {
     for (int i = 0; i < entry.num_pdos; ++i) {
+      //printf("read process num_pdos: %d\n", i);
       (entry.slave)->processData(i, domain_info->domain_pd + entry.offset[i]);
     }
   }
@@ -413,6 +415,7 @@ void EcMaster::setThreadHighPriority()
 {
   pid_t pid = getpid();
   int priority_status = setpriority(PRIO_PROCESS, pid, -19);
+  printf("Priority status: %d, pid: %d\n", priority_status, pid);
   if (priority_status) {
     printWarning("setThreadHighPriority. Failed to set priority.");
     return;
@@ -425,7 +428,7 @@ void EcMaster::setThreadRealTime()
       PRREMPT_RT uses priority 50
       for kernel tasklets and interrupt handler by default */
   struct sched_param param;
-  param.sched_priority = 49;
+  param.sched_priority = 99;
   // pthread_t this_thread = pthread_self();
   if (sched_setscheduler(0, SCHED_FIFO, &param) == -1) {
     perror("sched_setscheduler failed");

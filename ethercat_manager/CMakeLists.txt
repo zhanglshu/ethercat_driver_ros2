@@ -6,7 +6,7 @@ find_package(rclcpp REQUIRED)
 find_package(ethercat_msgs REQUIRED)
 
 # EtherLab
-set(ETHERLAB_DIR /usr/local/etherlab)
+set(ETHERLAB_DIR /opt/etherlab)
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
 find_library(ETHERCAT_LIB ethercat HINTS ${ETHERLAB_DIR}/lib)
@@ -17,6 +17,7 @@ ament_export_include_directories(
 )
 
 add_executable(
+  
   ethercat_sdo_srv_server
   src/ethercat_sdo_srv_server.cpp)
 target_include_directories(

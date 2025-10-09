@@ -284,13 +284,32 @@ CallbackReturn EthercatDriver::on_activate(
 
   master_.setCtrlFrequency(control_frequency_);
 
+  //master_.setThreadHighPriority();
+  //master_.setThreadRealTime();
+  // 打印进程号及其优先级
+  pid_t pid = getpid();
+  int policy;
+  struct sched_param param;
+  pthread_getschedparam(pthread_self(), &policy, &param);
+
+  RCLCPP_INFO(
+    rclcpp::get_logger("EthercatDriver"),
+    "Process ID: %d, Scheduling Policy: %s, Priority: %d",
+    pid,
+    (policy == SCHED_FIFO ? "SCHED_FIFO" :
+     policy == SCHED_RR ? "SCHED_RR" :
+     policy == SCHED_OTHER ? "SCHED_OTHER" : "UNKNOWN"),
+    param.sched_priority);
+
+
+
   for (auto i = 0ul; i < ec_modules_.size(); i++) {
     master_.addSlave(
       std::stod(ec_module_parameters_[i]["alias"]),
       std::stod(ec_module_parameters_[i]["position"]),
       ec_modules_[i].get());
   }
-
+  RCLCPP_INFO(rclcpp::get_logger("EthercatDriver"), "addSlave...");
   // configure SDO
   for (auto i = 0ul; i < ec_modules_.size(); i++) {
     for (auto & sdo : ec_modules_[i]->sdo_config) {
@@ -310,7 +329,7 @@ CallbackReturn EthercatDriver::on_activate(
       }
     }
   }
-
+  RCLCPP_INFO(rclcpp::get_logger("EthercatDriver"), "configSlaveSdo...");
   if (!master_.activate()) {
     RCLCPP_ERROR(rclcpp::get_logger("EthercatDriver"), "Activate EcMaster failed");
     return CallbackReturn::ERROR;
