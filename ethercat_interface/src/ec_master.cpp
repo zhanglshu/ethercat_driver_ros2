@@ -25,6 +25,8 @@
 #include <string.h>
 #include <iostream>
 #include <sstream>
+#include <thread>
+#include <atomic>
 
 #define EC_NEWTIMEVAL2NANO(TV) \
   (((TV).tv_sec - 946684800ULL) * 1000000000ULL + (TV).tv_nsec)
@@ -289,7 +291,7 @@ void EcMaster::update(uint32_t domain)
 
   struct timespec t;
 
-  clock_gettime(CLOCK_REALTIME, &t);
+  clock_gettime(CLOCK_MONOTONIC, &t);
   ecrt_master_application_time(master_, EC_NEWTIMEVAL2NANO(t));
   ecrt_master_sync_reference_clock(master_);
   ecrt_master_sync_slave_clocks(master_);
@@ -349,7 +351,7 @@ void EcMaster::writeData(uint32_t domain)
 
   struct timespec t;
 
-  clock_gettime(CLOCK_REALTIME, &t);
+  clock_gettime(CLOCK_MONOTONIC, &t);
   ecrt_master_application_time(master_, EC_NEWTIMEVAL2NANO(t));
   ecrt_master_sync_reference_clock(master_);
   ecrt_master_sync_slave_clocks(master_);
@@ -512,6 +514,107 @@ void EcMaster::checkSlaveStates()
 void EcMaster::printWarning(const std::string & message)
 {
   std::cout << "WARNING. Master. " << message << std::endl;
+}
+
+void EcMaster::startRealtimeThread()
+{
+  if (rt_running_) {
+    printWarning("Realtime thread already running");
+    return;
+  }
+
+  rt_running_ = true;
+  rt_thread_ = std::thread([this]() {
+    // Set realtime priority for this thread
+    struct sched_param param;
+    param.sched_priority = 99;
+    if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &param) == -1) {
+      perror("Failed to set RT priority for EtherCAT thread");
+    }
+
+    // Lock memory
+    if (mlockall(MCL_CURRENT | MCL_FUTURE) == -1) {
+      perror("mlockall failed in RT thread");
+    }
+
+    std::cout << "EtherCAT realtime thread started with SCHED_FIFO priority 99" << std::endl;
+    this->realtimeLoop();
+  });
+}
+
+void EcMaster::stopRealtimeThread()
+{
+  if (!rt_running_) {
+    return;
+  }
+
+  rt_running_ = false;
+  if (rt_thread_.joinable()) {
+    rt_thread_.join();
+  }
+  std::cout << "EtherCAT realtime thread stopped" << std::endl;
+}
+
+void EcMaster::realtimeLoop()
+{
+  struct timespec t;
+  clock_gettime(CLOCK_MONOTONIC, &t);
+  t.tv_sec++;
+
+  start_t_ = std::chrono::system_clock::now();
+
+  while (rt_running_) {
+    // Wait until next shot
+    clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &t, NULL);
+
+    // Receive process data
+    ecrt_master_receive(master_);
+
+    DomainInfo * domain_info = domain_info_.at(0);
+    if (domain_info == NULL) {
+      printWarning("Null domain info in RT loop");
+      break;
+    }
+
+    ecrt_domain_process(domain_info->domain);
+
+    // Check process data state (optional)
+    if (update_counter_ % check_state_frequency_ == 0) {
+      checkDomainState(0);
+      checkMasterState();
+      checkSlaveStates();
+    }
+
+    // Read and write process data
+    for (DomainInfo::Entry & entry : domain_info->entries) {
+      for (int i = 0; i < entry.num_pdos; ++i) {
+        (entry.slave)->processData(i, domain_info->domain_pd + entry.offset[i]);
+      }
+    }
+
+    // Update application time and sync DC
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    ecrt_master_application_time(master_, EC_NEWTIMEVAL2NANO(now));
+    ecrt_master_sync_reference_clock(master_);
+    ecrt_master_sync_slave_clocks(master_);
+
+    // Send process data
+    ecrt_domain_queue(domain_info->domain);
+    ecrt_master_send(master_);
+
+    ++update_counter_;
+
+    // Get actual time for elapsed time calculation
+    curr_t_ = std::chrono::system_clock::now();
+
+    // Calculate next shot
+    t.tv_nsec += interval_;
+    while (t.tv_nsec >= 1000000000) {
+      t.tv_nsec -= 1000000000;
+      t.tv_sec++;
+    }
+  }
 }
 
 }  // namespace ethercat_interface

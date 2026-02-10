@@ -22,6 +22,8 @@
 #include <vector>
 #include <map>
 #include <chrono>
+#include <thread>
+#include <atomic>
 #include "ethercat_interface/ec_slave.hpp"
 
 
@@ -90,12 +92,25 @@ public:
   void readData(uint32_t domain = 0);
   void writeData(uint32_t domain = 0);
 
+  /** start dedicated realtime thread for EtherCAT cycle */
+  void startRealtimeThread();
+
+  /** stop the realtime thread */
+  void stopRealtimeThread();
+
 private:
   /** true if running */
   volatile bool running_ = false;
 
   /** start and current time */
   std::chrono::time_point<std::chrono::system_clock> start_t_, curr_t_;
+
+  /** realtime thread components */
+  std::thread rt_thread_;
+  std::atomic<bool> rt_running_{false};
+
+  /** realtime loop function */
+  void realtimeLoop();
 
   // EtherCAT Control
 

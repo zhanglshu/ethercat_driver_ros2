@@ -284,8 +284,8 @@ CallbackReturn EthercatDriver::on_activate(
 
   master_.setCtrlFrequency(control_frequency_);
 
-  //master_.setThreadHighPriority();
-  //master_.setThreadRealTime();
+  master_.setThreadHighPriority();
+  master_.setThreadRealTime();
   // 打印进程号及其优先级
   pid_t pid = getpid();
   int policy;
@@ -336,36 +336,46 @@ CallbackReturn EthercatDriver::on_activate(
   }
   RCLCPP_INFO(rclcpp::get_logger("EthercatDriver"), "Activated EcMaster!");
 
-  // start after one second
+  // Wait for slaves to become operational
+  RCLCPP_INFO(rclcpp::get_logger("EthercatDriver"), "Waiting for slaves to initialize...");
   struct timespec t;
   clock_gettime(CLOCK_MONOTONIC, &t);
   t.tv_sec++;
 
   bool running = true;
-  while (running) {
-    // wait until next shot
+  int init_cycles = 0;
+  const int max_init_cycles = 100; // Maximum 100ms at 1kHz
+  
+  while (running && init_cycles < max_init_cycles) {
     clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &t, NULL);
-    // update EtherCAT bus
-
     master_.update();
-    RCLCPP_INFO(rclcpp::get_logger("EthercatDriver"), "updated!");
 
-    // check if operational
+    // Check if operational
     bool isAllInit = true;
     for (auto & module : ec_modules_) {
       isAllInit = isAllInit && module->initialized();
     }
     if (isAllInit) {
       running = false;
+      RCLCPP_INFO(rclcpp::get_logger("EthercatDriver"), "All slaves initialized after %d cycles", init_cycles);
     }
-    // calculate next shot. carry over nanoseconds into microseconds.
+    
     t.tv_nsec += master_.getInterval();
     while (t.tv_nsec >= 1000000000) {
       t.tv_nsec -= 1000000000;
       t.tv_sec++;
     }
+    init_cycles++;
   }
 
+  if (init_cycles >= max_init_cycles) {
+    RCLCPP_WARN(rclcpp::get_logger("EthercatDriver"), "Slaves did not initialize within timeout, continuing anyway...");
+  }
+
+  // Start the dedicated realtime thread for EtherCAT cycle
+  RCLCPP_INFO(rclcpp::get_logger("EthercatDriver"), "Starting EtherCAT realtime thread...");
+  master_.startRealtimeThread();
+  
   RCLCPP_INFO(
     rclcpp::get_logger("EthercatDriver"), "System Successfully started!");
 
@@ -382,6 +392,9 @@ CallbackReturn EthercatDriver::on_deactivate(
 
   RCLCPP_INFO(rclcpp::get_logger("EthercatDriver"), "Stopping ...please wait...");
 
+  // Stop the realtime thread first
+  master_.stopRealtimeThread();
+  
   // stop EC and disconnect
   master_.stop();
 
@@ -395,11 +408,8 @@ hardware_interface::return_type EthercatDriver::read(
   const rclcpp::Time & /*time*/,
   const rclcpp::Duration & /*period*/)
 {
-  // try to lock so we can avoid blocking the read/write loop on the lock.
-  const std::unique_lock<std::mutex> lock(ec_mutex_, std::try_to_lock);
-  if (lock.owns_lock() && activated_) {
-    master_.readData();
-  }
+  // Data is automatically updated by the dedicated realtime thread
+  // No action needed here - state_interface is updated lock-free
   return hardware_interface::return_type::OK;
 }
 
@@ -407,11 +417,8 @@ hardware_interface::return_type EthercatDriver::write(
   const rclcpp::Time & /*time*/,
   const rclcpp::Duration & /*period*/)
 {
-  // try to lock so we can avoid blocking the read/write loop on the lock.
-  const std::unique_lock<std::mutex> lock(ec_mutex_, std::try_to_lock);
-  if (lock.owns_lock() && activated_) {
-    master_.writeData();
-  }
+  // Commands are automatically sent by the dedicated realtime thread
+  // No action needed here - command_interface is read lock-free
   return hardware_interface::return_type::OK;
 }
 
