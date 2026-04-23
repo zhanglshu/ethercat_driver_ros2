@@ -283,25 +283,20 @@ CallbackReturn EthercatDriver::on_activate(
   // start EC and wait until state operative
 
   master_.setCtrlFrequency(control_frequency_);
+  // NOTE: Do NOT call setThreadHighPriority()/setThreadRealTime() here.
+  // sched_setscheduler(0,...) targets the *calling* thread (lifecycle thread), not
+  // the dedicated EtherCAT RT thread.  The RT thread sets its own SCHED_FIFO 99
+  // priority inside startRealtimeThread() via pthread_setschedparam.
 
-  master_.setThreadHighPriority();
-  master_.setThreadRealTime();
-  // 打印进程号及其优先级
-  pid_t pid = getpid();
-  int policy;
-  struct sched_param param;
-  pthread_getschedparam(pthread_self(), &policy, &param);
-
-  RCLCPP_INFO(
-    rclcpp::get_logger("EthercatDriver"),
-    "Process ID: %d, Scheduling Policy: %s, Priority: %d",
-    pid,
-    (policy == SCHED_FIFO ? "SCHED_FIFO" :
-     policy == SCHED_RR ? "SCHED_RR" :
-     policy == SCHED_OTHER ? "SCHED_OTHER" : "UNKNOWN"),
-    param.sched_priority);
-
-
+  // Pin the EtherCAT RT thread to a specific isolated CPU core (optional).
+  // Configure via hardware parameter "rt_cpu" in the URDF/xacro; -1 = no pinning.
+  if (info_.hardware_parameters.count("rt_cpu")) {
+    int rt_cpu = std::stoi(info_.hardware_parameters.at("rt_cpu"));
+    master_.setRtCpu(rt_cpu);
+    RCLCPP_INFO(
+      rclcpp::get_logger("EthercatDriver"),
+      "EtherCAT RT thread will be pinned to CPU %d", rt_cpu);
+  }
 
   for (auto i = 0ul; i < ec_modules_.size(); i++) {
     master_.addSlave(

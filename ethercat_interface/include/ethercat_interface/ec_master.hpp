@@ -89,6 +89,10 @@ public:
 
   uint32_t getInterval() {return interval_;}
 
+  /** Set the CPU core to which the RT thread will be pinned.
+   *  Call before startRealtimeThread(). -1 = no pinning (default). */
+  void setRtCpu(int cpu) { rt_cpu_ = cpu; }
+
   void readData(uint32_t domain = 0);
   void writeData(uint32_t domain = 0);
 
@@ -99,6 +103,8 @@ public:
   void stopRealtimeThread();
 
 private:
+  /** CPU core to pin the RT thread to (-1 = disabled) */
+  int rt_cpu_ = -1;
   /** true if running */
   volatile bool running_ = false;
 

@@ -525,6 +525,18 @@ void EcMaster::startRealtimeThread()
 
   rt_running_ = true;
   rt_thread_ = std::thread([this]() {
+    // Pin to isolated CPU core before raising priority
+    if (rt_cpu_ >= 0) {
+      cpu_set_t cpuset;
+      CPU_ZERO(&cpuset);
+      CPU_SET(rt_cpu_, &cpuset);
+      if (pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset) != 0) {
+        perror("EtherCAT RT: pthread_setaffinity_np failed");
+      } else {
+        printf("EtherCAT RT thread pinned to CPU %d\n", rt_cpu_);
+      }
+    }
+
     // Set realtime priority for this thread
     struct sched_param param;
     param.sched_priority = 99;
@@ -537,7 +549,7 @@ void EcMaster::startRealtimeThread()
       perror("mlockall failed in RT thread");
     }
 
-    std::cout << "EtherCAT realtime thread started with SCHED_FIFO priority 99" << std::endl;
+    printf("EtherCAT realtime thread started: SCHED_FIFO prio=99, CPU=%d\n", rt_cpu_);
     this->realtimeLoop();
   });
 }
