@@ -22,6 +22,7 @@
 #include <signal.h>
 #include <time.h>
 #include <sys/mman.h>
+#include <sys/syscall.h>
 #include <string.h>
 #include <iostream>
 #include <sstream>
@@ -33,6 +34,81 @@
 
 namespace ethercat_interface
 {
+namespace
+{
+
+pid_t currentThreadId()
+{
+  return static_cast<pid_t>(syscall(SYS_gettid));
+}
+
+const char * schedulerPolicyName(int policy)
+{
+  switch (policy) {
+    case SCHED_FIFO:
+      return "SCHED_FIFO";
+    case SCHED_RR:
+      return "SCHED_RR";
+    case SCHED_OTHER:
+      return "SCHED_OTHER";
+#ifdef SCHED_BATCH
+    case SCHED_BATCH:
+      return "SCHED_BATCH";
+#endif
+#ifdef SCHED_IDLE
+    case SCHED_IDLE:
+      return "SCHED_IDLE";
+#endif
+    default:
+      return "UNKNOWN";
+  }
+}
+
+std::string affinityString()
+{
+  cpu_set_t cpuset;
+  CPU_ZERO(&cpuset);
+  const int ret = pthread_getaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
+  if (ret != 0) {
+    return "unavailable";
+  }
+
+  const long cpu_count = sysconf(_SC_NPROCESSORS_CONF);
+  const int max_cpus = cpu_count > 0 ? static_cast<int>(cpu_count) : CPU_SETSIZE;
+  std::ostringstream oss;
+  bool first = true;
+  for (int cpu = 0; cpu < max_cpus && cpu < CPU_SETSIZE; ++cpu) {
+    if (CPU_ISSET(cpu, &cpuset)) {
+      if (!first) {
+        oss << ",";
+      }
+      oss << cpu;
+      first = false;
+    }
+  }
+  return first ? "none" : oss.str();
+}
+
+void printCurrentThreadSchedule(const char * label)
+{
+  int policy = SCHED_OTHER;
+  sched_param param {};
+  const int ret = pthread_getschedparam(pthread_self(), &policy, &param);
+  if (ret != 0) {
+    std::cout << label << " scheduling: pthread_getschedparam failed: " << strerror(ret)
+              << std::endl;
+    return;
+  }
+
+  std::cout << label << " scheduling: tid=" << currentThreadId()
+            << " policy=" << schedulerPolicyName(policy)
+            << " priority=" << param.sched_priority
+            << " current_cpu=" << sched_getcpu()
+            << " affinity=" << affinityString()
+            << std::endl;
+}
+
+}  // namespace
 
 EcMaster::DomainInfo::DomainInfo(ec_master_t * master)
 {
@@ -525,6 +601,11 @@ void EcMaster::startRealtimeThread()
 
   rt_running_ = true;
   rt_thread_ = std::thread([this]() {
+    const int name_ret = pthread_setname_np(pthread_self(), "ecat_rt");
+    if (name_ret != 0) {
+      std::cout << "EtherCAT RT: pthread_setname_np failed: " << strerror(name_ret) << std::endl;
+    }
+
     // Pin to isolated CPU core before raising priority
     if (rt_cpu_ >= 0) {
       cpu_set_t cpuset;
@@ -550,6 +631,7 @@ void EcMaster::startRealtimeThread()
     }
 
     printf("EtherCAT realtime thread started: SCHED_FIFO prio=99, CPU=%d\n", rt_cpu_);
+    printCurrentThreadSchedule("ecat_rt");
     this->realtimeLoop();
   });
 }
