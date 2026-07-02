@@ -68,6 +68,7 @@ public:
 private:
   std::vector<std::unordered_map<std::string, std::string>> getEcModuleParam(
     std::string & urdf, std::string component_name, std::string component_type);
+  void updateEthercatDiagnosticStates();
 
   std::vector<std::shared_ptr<ethercat_interface::EcSlave>> ec_modules_;
   std::vector<std::unordered_map<std::string, std::string>> ec_module_parameters_;

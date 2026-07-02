@@ -93,6 +93,28 @@ public:
    *  Call before startRealtimeThread(). -1 = no pinning (default). */
   void setRtCpu(int cpu) { rt_cpu_ = cpu; }
 
+  bool domainReady() const {return domain_ready_.load(std::memory_order_acquire);}
+  bool domainWorkingCounterComplete() const
+  {
+    return domain_wc_complete_.load(std::memory_order_acquire);
+  }
+  bool allSlavesOperational() const
+  {
+    return all_slaves_operational_.load(std::memory_order_acquire);
+  }
+  uint32_t domainWorkingCounter() const
+  {
+    return domain_working_counter_.load(std::memory_order_acquire);
+  }
+  uint32_t domainWorkingCounterState() const
+  {
+    return domain_wc_state_.load(std::memory_order_acquire);
+  }
+  uint32_t masterAlStates() const
+  {
+    return master_al_states_.load(std::memory_order_acquire);
+  }
+
   void readData(uint32_t domain = 0);
   void writeData(uint32_t domain = 0);
 
@@ -103,6 +125,8 @@ public:
   void stopRealtimeThread();
 
 private:
+  void refreshDomainReadySnapshot();
+
   /** CPU core to pin the RT thread to (-1 = disabled) */
   int rt_cpu_ = -1;
   /** true if running */
@@ -182,6 +206,13 @@ private:
   };
 
   std::vector<SlaveInfo> slave_info_;
+
+  std::atomic<bool> domain_ready_{false};
+  std::atomic<bool> domain_wc_complete_{false};
+  std::atomic<bool> all_slaves_operational_{false};
+  std::atomic<uint32_t> domain_working_counter_{0};
+  std::atomic<uint32_t> domain_wc_state_{0};
+  std::atomic<uint32_t> master_al_states_{0};
 
   /** counter of control loops */
   uint64_t update_counter_ = 0;

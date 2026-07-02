@@ -544,6 +544,13 @@ void EcMaster::checkDomainState(uint32_t domain)
     printf("Domain: State %u.\n", ds.wc_state);
   }
   domain_info->domain_state = ds;
+
+  if (domain == 0) {
+    domain_working_counter_.store(ds.working_counter, std::memory_order_release);
+    domain_wc_state_.store(static_cast<uint32_t>(ds.wc_state), std::memory_order_release);
+    domain_wc_complete_.store(ds.wc_state == EC_WC_COMPLETE, std::memory_order_release);
+    refreshDomainReadySnapshot();
+  }
 }
 
 
@@ -562,11 +569,14 @@ void EcMaster::checkMasterState()
     printf("Link is %s.\n", ms.link_up ? "up" : "down");
   }
   master_state_ = ms;
+  master_al_states_.store(static_cast<uint32_t>(ms.al_states), std::memory_order_release);
+  refreshDomainReadySnapshot();
 }
 
 
 void EcMaster::checkSlaveStates()
 {
+  bool all_operational = !slave_info_.empty();
   for (SlaveInfo & slave : slave_info_) {
     ec_slave_config_state_t s;
     ecrt_slave_config_state(slave.config, &s);
@@ -582,8 +592,11 @@ void EcMaster::checkSlaveStates()
       printf("Slave: %soperational.\n", s.operational ? "" : "Not ");
       slave.slave->set_state_is_operational(s.operational ? true : false);
     }
+    all_operational = all_operational && s.operational;
     slave.config_state = s;
   }
+  all_slaves_operational_.store(all_operational, std::memory_order_release);
+  refreshDomainReadySnapshot();
 }
 
 
@@ -592,12 +605,28 @@ void EcMaster::printWarning(const std::string & message)
   std::cout << "WARNING. Master. " << message << std::endl;
 }
 
+void EcMaster::refreshDomainReadySnapshot()
+{
+  const bool wc_complete = domain_wc_complete_.load(std::memory_order_acquire);
+  const bool slaves_operational = all_slaves_operational_.load(std::memory_order_acquire);
+  const bool master_operational =
+    master_al_states_.load(std::memory_order_acquire) == static_cast<uint32_t>(EC_AL_STATE_OP);
+  domain_ready_.store(wc_complete && slaves_operational && master_operational, std::memory_order_release);
+}
+
 void EcMaster::startRealtimeThread()
 {
   if (rt_running_) {
     printWarning("Realtime thread already running");
     return;
   }
+
+  domain_ready_.store(false, std::memory_order_release);
+  domain_wc_complete_.store(false, std::memory_order_release);
+  all_slaves_operational_.store(false, std::memory_order_release);
+  domain_working_counter_.store(0, std::memory_order_release);
+  domain_wc_state_.store(0, std::memory_order_release);
+  master_al_states_.store(0, std::memory_order_release);
 
   rt_running_ = true;
   rt_thread_ = std::thread([this]() {

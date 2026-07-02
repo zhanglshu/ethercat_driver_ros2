@@ -23,6 +23,17 @@
 
 namespace ethercat_driver
 {
+namespace
+{
+constexpr char kEthercatMasterStateName[] = "ethercat_master";
+constexpr char kEthercatDomainReady[] = "domain_ready";
+constexpr char kEthercatAllSlavesOperational[] = "all_slaves_operational";
+constexpr char kEthercatWorkingCounterComplete[] = "wc_complete";
+constexpr char kEthercatWorkingCounter[] = "working_counter";
+constexpr char kEthercatWorkingCounterState[] = "wc_state";
+constexpr char kEthercatMasterAlStates[] = "master_al_states";
+}  // namespace
+
 CallbackReturn EthercatDriver::on_init(
   const hardware_interface::HardwareInfo & info)
 {
@@ -404,7 +415,9 @@ hardware_interface::return_type EthercatDriver::read(
   const rclcpp::Duration & /*period*/)
 {
   // Data is automatically updated by the dedicated realtime thread
-  // No action needed here - state_interface is updated lock-free
+  // No EtherCAT transaction is needed here; only mirror the RT diagnostics into
+  // ros2_control state interfaces for controllers.
+  updateEthercatDiagnosticStates();
   return hardware_interface::return_type::OK;
 }
 
@@ -415,6 +428,36 @@ hardware_interface::return_type EthercatDriver::write(
   // Commands are automatically sent by the dedicated realtime thread
   // No action needed here - command_interface is read lock-free
   return hardware_interface::return_type::OK;
+}
+
+void EthercatDriver::updateEthercatDiagnosticStates()
+{
+  for (uint g = 0; g < info_.gpios.size(); ++g) {
+    if (info_.gpios[g].name != kEthercatMasterStateName) {
+      continue;
+    }
+
+    for (uint i = 0; i < info_.gpios[g].state_interfaces.size(); ++i) {
+      const auto & interface_name = info_.gpios[g].state_interfaces[i].name;
+      double value = std::numeric_limits<double>::quiet_NaN();
+
+      if (interface_name == kEthercatDomainReady) {
+        value = master_.domainReady() ? 1.0 : 0.0;
+      } else if (interface_name == kEthercatAllSlavesOperational) {
+        value = master_.allSlavesOperational() ? 1.0 : 0.0;
+      } else if (interface_name == kEthercatWorkingCounterComplete) {
+        value = master_.domainWorkingCounterComplete() ? 1.0 : 0.0;
+      } else if (interface_name == kEthercatWorkingCounter) {
+        value = static_cast<double>(master_.domainWorkingCounter());
+      } else if (interface_name == kEthercatWorkingCounterState) {
+        value = static_cast<double>(master_.domainWorkingCounterState());
+      } else if (interface_name == kEthercatMasterAlStates) {
+        value = static_cast<double>(master_.masterAlStates());
+      }
+
+      hw_gpio_states_[g][i] = value;
+    }
+  }
 }
 
 std::vector<std::unordered_map<std::string, std::string>> EthercatDriver::getEcModuleParam(
