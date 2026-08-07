@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <algorithm>
 #include <map>
 #include <pluginlib/class_loader.hpp>
 #include "ethercat_interface/ec_slave.hpp"
@@ -222,6 +223,22 @@ TEST_F(GenericEcSlaveTest, EcWriteRPDODefaultValue)
   plugin_->processData(2, domain_address);
   ASSERT_EQ(plugin_->pdo_channels_info_[2].last_value, -5);
   ASSERT_EQ(EC_READ_S16(domain_address), -5);
+}
+
+TEST_F(GenericEcSlaveTest, ModeOfOperationParameterOverridesRpdoDefault)
+{
+  SetUp();
+  plugin_->paramters_["mode_of_operation"] = "10";
+  ASSERT_TRUE(plugin_->setup_from_config(YAML::Load(test_slave_config)));
+  ASSERT_TRUE(plugin_->apply_parameter_overrides());
+
+  const auto mode_channel = std::find_if(
+    plugin_->pdo_channels_info_.begin(), plugin_->pdo_channels_info_.end(),
+    [](const auto & channel) {
+      return channel.pdo_type == ethercat_interface::RPDO && channel.index == 0x6060;
+    });
+  ASSERT_NE(mode_channel, plugin_->pdo_channels_info_.end());
+  EXPECT_DOUBLE_EQ(mode_channel->default_value, 10.0);
 }
 
 TEST_F(GenericEcSlaveTest, SlaveSetupSDOConfig)

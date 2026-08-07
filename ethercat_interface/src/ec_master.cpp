@@ -28,6 +28,7 @@
 #include <sstream>
 #include <thread>
 #include <atomic>
+#include <algorithm>
 
 #define EC_NEWTIMEVAL2NANO(TV) \
   (((TV).tv_sec - 946684800ULL) * 1000000000ULL + (TV).tv_nsec)
@@ -159,6 +160,8 @@ void EcMaster::addSlave(uint16_t alias, uint16_t position, EcSlave * slave)
   // configure slave in master
 
   SlaveInfo slave_info;
+  slave_info.alias = alias;
+  slave_info.position = position;
   slave_info.slave = slave;
   slave_info.config = ecrt_master_slave_config(
     master_, alias, position,
@@ -226,21 +229,29 @@ void EcMaster::addSlave(uint16_t alias, uint16_t position, EcSlave * slave)
 }
 
 int EcMaster::configSlaveSdo(
-  uint16_t slave_position, SdoConfigEntry sdo_config,
-  uint32_t * abort_code)
+  uint16_t alias, uint16_t position, const SdoConfigEntry & sdo_config)
 {
+  const auto slave_it = std::find_if(
+    slave_info_.begin(), slave_info_.end(),
+    [alias, position](const SlaveInfo & info) {
+      return info.alias == alias && info.position == position;
+    });
+  if (slave_it == slave_info_.end() || slave_it->config == NULL) {
+    printWarning(
+      "Configure SDO. Unknown slave " + std::to_string(alias) + ":" +
+      std::to_string(position));
+    return -1;
+  }
+
   uint8_t buffer[8];
   sdo_config.buffer_write(buffer);
-  int ret = ecrt_master_sdo_download(
-    master_,
-    slave_position,
+  return ecrt_slave_config_sdo(
+    slave_it->config,
     sdo_config.index,
     sdo_config.sub_index,
     buffer,
-    sdo_config.data_size(),
-    abort_code
+    sdo_config.data_size()
   );
-  return ret;
 }
 
 void EcMaster::registerPDOInDomain(

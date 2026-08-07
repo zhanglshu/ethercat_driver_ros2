@@ -14,7 +14,10 @@
 
 #include "ethercat_driver/ethercat_driver.hpp"
 
+#include "ethercat_interface/slave_address_registry.hpp"
+
 #include <tinyxml2.h>
+#include <limits>
 #include <string>
 #include <regex>
 
@@ -309,29 +312,51 @@ CallbackReturn EthercatDriver::on_activate(
       "EtherCAT RT thread will be pinned to CPU %d", rt_cpu);
   }
 
+  ethercat_interface::SlaveAddressRegistry slave_addresses;
+  std::vector<ethercat_interface::SlaveAddress> parsed_addresses;
+  parsed_addresses.reserve(ec_modules_.size());
+  try {
+    for (const auto & parameters : ec_module_parameters_) {
+      const auto alias_value = std::stoul(parameters.at("alias"));
+      const auto position_value = std::stoul(parameters.at("position"));
+      if (alias_value > std::numeric_limits<uint16_t>::max() ||
+        position_value > std::numeric_limits<uint16_t>::max())
+      {
+        throw std::out_of_range("EtherCAT alias or position exceeds uint16 range");
+      }
+      const ethercat_interface::SlaveAddress address{
+        static_cast<uint16_t>(alias_value), static_cast<uint16_t>(position_value)};
+      slave_addresses.add(address);
+      parsed_addresses.push_back(address);
+    }
+  } catch (const std::exception & exception) {
+    RCLCPP_FATAL(
+      rclcpp::get_logger("EthercatDriver"),
+      "Invalid EtherCAT alias topology: %s", exception.what());
+    return CallbackReturn::ERROR;
+  }
+
   for (auto i = 0ul; i < ec_modules_.size(); i++) {
     master_.addSlave(
-      std::stod(ec_module_parameters_[i]["alias"]),
-      std::stod(ec_module_parameters_[i]["position"]),
+      parsed_addresses[i].alias,
+      parsed_addresses[i].position,
       ec_modules_[i].get());
   }
   RCLCPP_INFO(rclcpp::get_logger("EthercatDriver"), "addSlave...");
   // configure SDO
   for (auto i = 0ul; i < ec_modules_.size(); i++) {
     for (auto & sdo : ec_modules_[i]->sdo_config) {
-      uint32_t abort_code;
       int ret = master_.configSlaveSdo(
-        std::stod(ec_module_parameters_[i]["position"]),
-        sdo,
-        &abort_code
+        parsed_addresses[i].alias,
+        parsed_addresses[i].position,
+        sdo
       );
       if (ret) {
-        RCLCPP_INFO(
+        RCLCPP_ERROR(
           rclcpp::get_logger("EthercatDriver"),
-          "Failed to download config SDO for module at position %s with Error: %d",
-          ec_module_parameters_[i]["position"].c_str(),
-          abort_code
-        );
+          "Failed to queue config SDO for module %u:%u with Error: %d",
+          parsed_addresses[i].alias, parsed_addresses[i].position, ret);
+        return CallbackReturn::ERROR;
       }
     }
   }

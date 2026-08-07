@@ -65,6 +65,12 @@ if(BUILD_TESTING)
   ament_target_dependencies(test_ec_pdo_channel_manager
     yaml_cpp_vendor
   )
+
+  ament_add_gmock(
+    test_slave_address_registry
+    test/test_slave_address_registry.cpp
+  )
+  target_include_directories(test_slave_address_registry PRIVATE include ${ETHERLAB_DIR}/include)
 endif()
 
 ## EXPORTS

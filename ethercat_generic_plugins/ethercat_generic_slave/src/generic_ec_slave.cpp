@@ -14,7 +14,9 @@
 //
 // Author: Maciej Bednarczyk (macbednarczyk@gmail.com)
 
+#include <algorithm>
 #include <numeric>
+#include <limits>
 
 #include "ethercat_generic_plugins/generic_ec_slave.hpp"
 
@@ -30,6 +32,7 @@ size_t type2bytes(std::string type)
   } else if (type == "int64" || type == "uint64") {
     return 8;
   }
+  return 0;
 }
 
 namespace ethercat_generic_plugins
@@ -101,9 +104,52 @@ bool GenericEcSlave::setupSlave(
     return false;
   }
 
+  if (!apply_parameter_overrides()) {
+    return false;
+  }
+
   setup_interface_mapping();
   setup_syncs();
 
+  return true;
+}
+
+bool GenericEcSlave::apply_parameter_overrides()
+{
+  const auto mode_parameter = paramters_.find("mode_of_operation");
+  if (mode_parameter == paramters_.end()) {
+    return true;
+  }
+
+  int mode = 0;
+  try {
+    std::size_t parsed_characters = 0U;
+    mode = std::stoi(mode_parameter->second, &parsed_characters, 10);
+    if (parsed_characters != mode_parameter->second.size()) {
+      throw std::invalid_argument("trailing characters");
+    }
+  } catch (const std::exception & exception) {
+    std::cerr << "GenericEcSlave: invalid mode_of_operation '" << mode_parameter->second <<
+      "': " << exception.what() << std::endl;
+    return false;
+  }
+  if (mode < std::numeric_limits<int8_t>::min() || mode > std::numeric_limits<int8_t>::max()) {
+    std::cerr << "GenericEcSlave: mode_of_operation is outside int8 range" << std::endl;
+    return false;
+  }
+
+  auto mode_channel = std::find_if(
+    pdo_channels_info_.begin(), pdo_channels_info_.end(),
+    [](const auto & channel) {
+      return channel.pdo_type == ethercat_interface::RPDO && channel.index == 0x6060 &&
+      channel.sub_index == 0;
+    });
+  if (mode_channel == pdo_channels_info_.end()) {
+    std::cerr << "GenericEcSlave: mode_of_operation override requested but RPDO 0x6060:0 "
+      "is not mapped" << std::endl;
+    return false;
+  }
+  mode_channel->default_value = static_cast<double>(mode);
   return true;
 }
 

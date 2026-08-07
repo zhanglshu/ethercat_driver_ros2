@@ -43,9 +43,11 @@ public:
     */
   void addSlave(uint16_t alias, uint16_t position, EcSlave * slave);
 
-  /** \brief configure slave using SDO
+  /** \brief Queue an SDO for the slave selected by station alias and relative position.
+    * Must be called after addSlave() and before activate().
     */
-  int configSlaveSdo(uint16_t slave_position, SdoConfigEntry sdo_config, uint32_t * abort_code);
+  int configSlaveSdo(
+    uint16_t alias, uint16_t position, const SdoConfigEntry & sdo_config);
 
   /** call after adding all slaves, and before update */
   bool activate();
@@ -200,6 +202,8 @@ private:
   /** data needed to check slave state */
   struct SlaveInfo
   {
+    uint16_t alias = 0U;
+    uint16_t position = 0U;
     EcSlave * slave = NULL;
     ec_slave_config_t * config = NULL;
     ec_slave_config_state_t config_state = {0};

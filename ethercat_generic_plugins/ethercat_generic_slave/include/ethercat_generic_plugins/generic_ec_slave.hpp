@@ -68,6 +68,8 @@ protected:
   void setup_syncs();
 
   void setup_interface_mapping();
+  /** Apply per-module URDF overrides after the shared YAML has been loaded. */
+  bool apply_parameter_overrides();
 };
 }  // namespace ethercat_generic_plugins
 

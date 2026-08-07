@@ -33,7 +33,7 @@ public:
   SdoConfigEntry() {}
   ~SdoConfigEntry() {}
 
-  void buffer_write(uint8_t * buffer)
+  void buffer_write(uint8_t * buffer) const
   {
     if (data_type == "uint8") {
       EC_WRITE_U8(buffer, static_cast<uint8_t>(data));
@@ -88,7 +88,7 @@ public:
     return true;
   }
 
-  size_t data_size()
+  size_t data_size() const
   {
     return type2bytes(data_type);
   }
@@ -99,7 +99,7 @@ public:
   int data;
 
 private:
-  size_t type2bytes(std::string type)
+  static size_t type2bytes(const std::string & type)
   {
     if (type == "int8" || type == "uint8") {
       return 1;
@@ -110,6 +110,7 @@ private:
     } else if (type == "int64" || type == "uint64") {
       return 8;
     }
+    return 0;
   }
 };
 
