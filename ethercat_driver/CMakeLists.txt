@@ -17,6 +17,7 @@ add_library(
   ${PROJECT_NAME}
   SHARED
   src/ethercat_driver.cpp)
+target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_17)
 
 target_include_directories(
   ${PROJECT_NAME}
@@ -52,6 +53,11 @@ install(
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
+  find_package(Threads REQUIRED)
+  ament_add_gtest(test_cyclic_io_exchange test/test_cyclic_io_exchange.cpp)
+  target_include_directories(test_cyclic_io_exchange PRIVATE include)
+  target_compile_features(test_cyclic_io_exchange PRIVATE cxx_std_17)
+  target_link_libraries(test_cyclic_io_exchange Threads::Threads)
 endif()
 
 ## EXPORTS

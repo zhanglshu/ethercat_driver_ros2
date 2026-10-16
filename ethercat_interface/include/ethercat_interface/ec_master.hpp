@@ -120,6 +120,16 @@ public:
   void readData(uint32_t domain = 0);
   void writeData(uint32_t domain = 0);
 
+  // Non-RT setup only, before cyclic IO starts. Callbacks must not allocate,
+  // block, log, or throw. The context must outlive the master thread.
+  using CycleCallback = void (*)(void *);
+  void setCycleCallbacks(void * context, CycleCallback before, CycleCallback after)
+  {
+    cycle_context_ = context;
+    before_cycle_ = before;
+    after_cycle_ = after;
+  }
+
   /** start dedicated realtime thread for EtherCAT cycle */
   void startRealtimeThread();
 
@@ -148,6 +158,7 @@ private:
 
   /** register a domain of the slave */
   struct DomainInfo;
+  void processDomainData(DomainInfo & domain);
   void registerPDOInDomain(
     uint16_t alias, uint16_t position,
     std::vector<uint32_t> & channel_indices,
@@ -155,13 +166,13 @@ private:
     EcSlave * slave);
 
   /** check for change in the domain state */
-  void checkDomainState(uint32_t domain);
+  void checkDomainState(uint32_t domain, bool log_changes = true);
 
   /** check for change in the master state */
-  void checkMasterState();
+  void checkMasterState(bool log_changes = true);
 
   /** check for change in the slave states */
-  void checkSlaveStates();
+  void checkSlaveStates(bool log_changes = true);
 
   /** print warning message to terminal */
   static void printWarning(const std::string & message);
@@ -198,6 +209,9 @@ private:
 
   /** map from domain index to domain info */
   std::map<uint32_t, DomainInfo *> domain_info_;
+  void * cycle_context_ = nullptr;
+  CycleCallback before_cycle_ = nullptr;
+  CycleCallback after_cycle_ = nullptr;
 
   /** data needed to check slave state */
   struct SlaveInfo

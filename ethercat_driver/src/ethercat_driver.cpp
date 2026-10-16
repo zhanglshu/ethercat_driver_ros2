@@ -84,6 +84,14 @@ CallbackReturn EthercatDriver::on_init(
       std::numeric_limits<double>::quiet_NaN());
   }
 
+  io_exchange_.initialize(
+    {hw_joint_commands_, hw_sensor_commands_, hw_gpio_commands_},
+    {hw_joint_states_, hw_sensor_states_, hw_gpio_states_});
+  master_.setCycleCallbacks(
+    this,
+    [](void * context) {static_cast<EthercatDriver *>(context)->latchCommandsForCycle();},
+    [](void * context) {static_cast<EthercatDriver *>(context)->publishStatesForCycle();});
+
   for (uint j = 0; j < info_.joints.size(); j++) {
     RCLCPP_INFO(rclcpp::get_logger("EthercatDriver"), "joints");
     // check all joints for EC modules and load into ec_modules_
@@ -102,7 +110,8 @@ CallbackReturn EthercatDriver::on_init(
       try {
         auto module = ec_loader_.createSharedInstance(module_params[i].at("plugin"));
         if (!module->setupSlave(
-            module_params[i], &hw_joint_states_[j], &hw_joint_commands_[j]))
+            module_params[i], &io_exchange_.bus_states().joints[j],
+            &io_exchange_.bus_commands().joints[j]))
         {
           RCLCPP_FATAL(
             rclcpp::get_logger("EthercatDriver"),
@@ -136,7 +145,8 @@ CallbackReturn EthercatDriver::on_init(
       try {
         auto module = ec_loader_.createSharedInstance(module_params[i].at("plugin"));
         if (!module->setupSlave(
-            module_params[i], &hw_gpio_states_[g], &hw_gpio_commands_[g]))
+            module_params[i], &io_exchange_.bus_states().gpios[g],
+            &io_exchange_.bus_commands().gpios[g]))
         {
           RCLCPP_FATAL(
             rclcpp::get_logger("EthercatDriver"),
@@ -170,7 +180,8 @@ CallbackReturn EthercatDriver::on_init(
       try {
         auto module = ec_loader_.createSharedInstance(module_params[i].at("plugin"));
         if (!module->setupSlave(
-            module_params[i], &hw_sensor_states_[s], &hw_sensor_commands_[s]))
+            module_params[i], &io_exchange_.bus_states().sensors[s],
+            &io_exchange_.bus_commands().sensors[s]))
         {
           RCLCPP_FATAL(
             rclcpp::get_logger("EthercatDriver"),
@@ -439,10 +450,7 @@ hardware_interface::return_type EthercatDriver::read(
   const rclcpp::Time & /*time*/,
   const rclcpp::Duration & /*period*/)
 {
-  // Data is automatically updated by the dedicated realtime thread
-  // No EtherCAT transaction is needed here; only mirror the RT diagnostics into
-  // ros2_control state interfaces for controllers.
-  updateEthercatDiagnosticStates();
+  io_exchange_.read_states(hw_joint_states_, hw_sensor_states_, hw_gpio_states_);
   return hardware_interface::return_type::OK;
 }
 
@@ -450,9 +458,19 @@ hardware_interface::return_type EthercatDriver::write(
   const rclcpp::Time & /*time*/,
   const rclcpp::Duration & /*period*/)
 {
-  // Commands are automatically sent by the dedicated realtime thread
-  // No action needed here - command_interface is read lock-free
+  io_exchange_.publish_commands(hw_joint_commands_, hw_sensor_commands_, hw_gpio_commands_);
   return hardware_interface::return_type::OK;
+}
+
+void EthercatDriver::latchCommandsForCycle() noexcept
+{
+  io_exchange_.latch_commands();
+}
+
+void EthercatDriver::publishStatesForCycle() noexcept
+{
+  updateEthercatDiagnosticStates();
+  io_exchange_.publish_states();
 }
 
 void EthercatDriver::updateEthercatDiagnosticStates()
@@ -480,7 +498,7 @@ void EthercatDriver::updateEthercatDiagnosticStates()
         value = static_cast<double>(master_.masterAlStates());
       }
 
-      hw_gpio_states_[g][i] = value;
+      io_exchange_.bus_states().gpios[g][i] = value;
     }
   }
 }

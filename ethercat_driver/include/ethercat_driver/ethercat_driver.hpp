@@ -28,6 +28,7 @@
 #include "rclcpp_lifecycle/node_interfaces/lifecycle_node_interface.hpp"
 #include "rclcpp_lifecycle/state.hpp"
 #include "ethercat_driver/visibility_control.h"
+#include "ethercat_driver/cyclic_io_exchange.hpp"
 #include "ethercat_interface/ec_slave.hpp"
 #include "ethercat_interface/ec_master.hpp"
 
@@ -69,6 +70,8 @@ private:
   std::vector<std::unordered_map<std::string, std::string>> getEcModuleParam(
     std::string & urdf, std::string component_name, std::string component_type);
   void updateEthercatDiagnosticStates();
+  void latchCommandsForCycle() noexcept;
+  void publishStatesForCycle() noexcept;
 
   std::vector<std::shared_ptr<ethercat_interface::EcSlave>> ec_modules_;
   std::vector<std::unordered_map<std::string, std::string>> ec_module_parameters_;
@@ -79,6 +82,7 @@ private:
   std::vector<std::vector<double>> hw_joint_states_;
   std::vector<std::vector<double>> hw_sensor_states_;
   std::vector<std::vector<double>> hw_gpio_states_;
+  CyclicIoExchange io_exchange_;
 
   pluginlib::ClassLoader<ethercat_interface::EcSlave> ec_loader_{
     "ethercat_interface", "ethercat_interface::EcSlave"};

@@ -369,12 +369,7 @@ void EcMaster::update(uint32_t domain)
     checkSlaveStates();
   }
 
-  // read and write process data
-  for (DomainInfo::Entry & entry : domain_info->entries) {
-    for (int i = 0; i < entry.num_pdos; ++i) {
-      (entry.slave)->processData(i, domain_info->domain_pd + entry.offset[i]);
-    }
-  }
+  processDomainData(*domain_info);
 
   struct timespec t;
 
@@ -411,13 +406,7 @@ void EcMaster::readData(uint32_t domain)
     checkSlaveStates();
   }
 
-  // read and write process data
-  for (DomainInfo::Entry & entry : domain_info->entries) {
-    for (int i = 0; i < entry.num_pdos; ++i) {
-      //printf("read process num_pdos: %d\n", i);
-      (entry.slave)->processData(i, domain_info->domain_pd + entry.offset[i]);
-    }
-  }
+  processDomainData(*domain_info);
 
   ++update_counter_;
 }
@@ -429,12 +418,7 @@ void EcMaster::writeData(uint32_t domain)
     throw std::runtime_error("Null domain info: " + std::to_string(domain));
   }
 
-  // read and write process data
-  for (DomainInfo::Entry & entry : domain_info->entries) {
-    for (int i = 0; i < entry.num_pdos; ++i) {
-      (entry.slave)->processData(i, domain_info->domain_pd + entry.offset[i]);
-    }
-  }
+  processDomainData(*domain_info);
 
   struct timespec t;
 
@@ -538,7 +522,7 @@ void EcMaster::setThreadRealTime()
   memset(dummy, 0, MAX_SAFE_STACK);
 }
 
-void EcMaster::checkDomainState(uint32_t domain)
+void EcMaster::checkDomainState(uint32_t domain, bool log_changes)
 {
   DomainInfo * domain_info = domain_info_.at(domain);
   if (domain_info == NULL) {
@@ -548,10 +532,10 @@ void EcMaster::checkDomainState(uint32_t domain)
   ec_domain_state_t ds;
   ecrt_domain_state(domain_info->domain, &ds);
 
-  if (ds.working_counter != domain_info->domain_state.working_counter) {
+  if (log_changes && ds.working_counter != domain_info->domain_state.working_counter) {
     printf("Domain: WC %u.\n", ds.working_counter);
   }
-  if (ds.wc_state != domain_info->domain_state.wc_state) {
+  if (log_changes && ds.wc_state != domain_info->domain_state.wc_state) {
     printf("Domain: State %u.\n", ds.wc_state);
   }
   domain_info->domain_state = ds;
@@ -565,18 +549,18 @@ void EcMaster::checkDomainState(uint32_t domain)
 }
 
 
-void EcMaster::checkMasterState()
+void EcMaster::checkMasterState(bool log_changes)
 {
   ec_master_state_t ms;
   ecrt_master_state(master_, &ms);
 
-  if (ms.slaves_responding != master_state_.slaves_responding) {
+  if (log_changes && ms.slaves_responding != master_state_.slaves_responding) {
     printf("%u slave(s).\n", ms.slaves_responding);
   }
-  if (ms.al_states != master_state_.al_states) {
+  if (log_changes && ms.al_states != master_state_.al_states) {
     printf("Master AL states: 0x%02X.\n", ms.al_states);
   }
-  if (ms.link_up != master_state_.link_up) {
+  if (log_changes && ms.link_up != master_state_.link_up) {
     printf("Link is %s.\n", ms.link_up ? "up" : "down");
   }
   master_state_ = ms;
@@ -585,22 +569,22 @@ void EcMaster::checkMasterState()
 }
 
 
-void EcMaster::checkSlaveStates()
+void EcMaster::checkSlaveStates(bool log_changes)
 {
   bool all_operational = !slave_info_.empty();
   for (SlaveInfo & slave : slave_info_) {
     ec_slave_config_state_t s;
     ecrt_slave_config_state(slave.config, &s);
 
-    if (s.al_state != slave.config_state.al_state) {
+    if (log_changes && s.al_state != slave.config_state.al_state) {
       // this spams the terminal at initialization.
       printf("Slave: State 0x%02X.\n", s.al_state);
     }
-    if (s.online != slave.config_state.online) {
+    if (log_changes && s.online != slave.config_state.online) {
       printf("Slave: %s.\n", s.online ? "online" : "offline");
     }
     if (s.operational != slave.config_state.operational) {
-      printf("Slave: %soperational.\n", s.operational ? "" : "Not ");
+      if (log_changes) {printf("Slave: %soperational.\n", s.operational ? "" : "Not ");}
       slave.slave->set_state_is_operational(s.operational ? true : false);
     }
     all_operational = all_operational && s.operational;
@@ -638,6 +622,10 @@ void EcMaster::startRealtimeThread()
   domain_working_counter_.store(0, std::memory_order_release);
   domain_wc_state_.store(0, std::memory_order_release);
   master_al_states_.store(0, std::memory_order_release);
+
+  // Lifecycle thread is still the sole feedback producer. Publish readiness
+  // reset before handing producer ownership to the new RT thread.
+  if (after_cycle_) {after_cycle_(cycle_context_);}
 
   rt_running_ = true;
   rt_thread_ = std::thread([this]() {
@@ -689,6 +677,17 @@ void EcMaster::stopRealtimeThread()
   std::cout << "EtherCAT realtime thread stopped" << std::endl;
 }
 
+void EcMaster::processDomainData(DomainInfo & domain)
+{
+  if (before_cycle_) {before_cycle_(cycle_context_);}
+  for (DomainInfo::Entry & entry : domain.entries) {
+    for (int i = 0; i < entry.num_pdos; ++i) {
+      entry.slave->processData(i, domain.domain_pd + entry.offset[i]);
+    }
+  }
+  if (after_cycle_) {after_cycle_(cycle_context_);}
+}
+
 void EcMaster::realtimeLoop()
 {
   struct timespec t;
@@ -706,7 +705,6 @@ void EcMaster::realtimeLoop()
 
     DomainInfo * domain_info = domain_info_.at(0);
     if (domain_info == NULL) {
-      printWarning("Null domain info in RT loop");
       break;
     }
 
@@ -714,17 +712,14 @@ void EcMaster::realtimeLoop()
 
     // Check process data state (optional)
     if (update_counter_ % check_state_frequency_ == 0) {
-      checkDomainState(0);
-      checkMasterState();
-      checkSlaveStates();
+      // Runtime changes are exported through the feedback snapshot. Console
+      // IO may block and is reserved for the non-RT initialization path.
+      checkDomainState(0, false);
+      checkMasterState(false);
+      checkSlaveStates(false);
     }
 
-    // Read and write process data
-    for (DomainInfo::Entry & entry : domain_info->entries) {
-      for (int i = 0; i < entry.num_pdos; ++i) {
-        (entry.slave)->processData(i, domain_info->domain_pd + entry.offset[i]);
-      }
-    }
+    processDomainData(*domain_info);
 
     // Update application time and sync DC
     struct timespec now;
